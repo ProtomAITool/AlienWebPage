@@ -1,4 +1,8 @@
 <!DOCTYPE html>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+const supabaseUrl = 'https://httgtphrfcbflfehwdwt.supabase.co/rest/v1/';
+const supabaseKey = 'sb_publishable_hf_Dcjv2NZIVIi8zAk90Ow_ciTgOHNv';
+const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -537,67 +541,99 @@
             showToast('Report expunged from records.');
         }
 
-        // User Logic
-        function saveSighting(data) {
-            const sightings = JSON.parse(localStorage.getItem('alien_sightings') || '[]');
-            sightings.push(data);
-            localStorage.setItem('alien_sightings', JSON.stringify(sightings));
-        }
+      
 
-        function loadGallery() {
-            const grid = document.getElementById('evidence-grid');
-            const emptyMsg = document.getElementById('empty-gallery');
-            const sightings = JSON.parse(localStorage.getItem('alien_sightings') || '[]');
+        async function loadGallery() {
+    const grid = document.getElementById('evidence-grid');
+    grid.innerHTML = '';
 
-            if (sightings.length > 0 && emptyMsg) {
-                emptyMsg.remove();
-            }
+    const { data, error } = await supabase
+        .from('sightings')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-            if (sightings.length === 0) return;
+    if (error) {
+        console.error(error);
+        return;
+    }
 
-            grid.innerHTML = '';
-            sightings.forEach(s => {
-                const card = document.createElement('div');
-                card.className = 'glass p-4 group hover:bg-white/10 transition-all';
-                card.innerHTML = `
-                    <img src="${s.image}" class="w-full h-48 object-cover rounded-xl mb-4 grayscale group-hover:grayscale-0 transition-all" alt="Sighting">
-                    <div class="mono text-[10px] text-blue-400 uppercase font-bold mb-1">${s.city}, ${s.country} | ${s.time}</div>
-                    <p class="text-sm text-zinc-400 font-light leading-relaxed">${s.description}</p>
-                `;
-                grid.appendChild(card);
-            });
-        }
+    if (data.length === 0) {
+        grid.innerHTML = `
+            <div class="col-span-full text-center py-20 mono text-zinc-600 italic">
+                Awaiting data transmission...
+            </div>
+        `;
+        return;
+    }
+
+    data.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'glass p-4 group hover:bg-white/10 transition-all';
+        card.innerHTML = `
+            <img src="${s.image_url}" class="w-full h-48 object-cover rounded-xl mb-4 grayscale group-hover:grayscale-0 transition-all">
+            <div class="mono text-[10px] text-blue-400 uppercase font-bold mb-1">${s.city}, ${s.country} | ${s.time}</div>
+            <p class="text-sm text-zinc-400 font-light leading-relaxed">${s.description}</p>
+        `;
+        grid.appendChild(card);
+    });
+
 
         document.getElementById('sighting-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const fileInput = document.getElementById('image-upload');
-            const file = fileInput.files[0];
+    e.preventDefault();
 
-            let base64Image = '';
-            if (file) {
-                base64Image = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.readAsDataURL(file);
-                });
-            }
+    const formData = new FormData(e.target);
+    const file = document.getElementById('image-upload').files[0];
 
-            const data = {
+    if (!file) return;
+
+    showToast("Uploading to global archive...");
+
+    // 1️⃣ Upload image to Supabase Storage
+    const fileName = Date.now() + "-" + file.name;
+
+    const { data: uploadData, error: uploadError } =
+        await supabase.storage
+            .from('sightings')
+            .upload(fileName, file);
+
+    if (uploadError) {
+        showToast("Upload failed.");
+        console.error(uploadError);
+        return;
+    }
+
+    const { data: publicUrlData } =
+        supabase.storage
+            .from('sightings')
+            .getPublicUrl(fileName);
+
+    const imageUrl = publicUrlData.publicUrl;
+
+    // 2️⃣ Insert into database
+    const { error: insertError } = await supabase
+        .from('sightings')
+        .insert([
+            {
                 country: formData.get('country'),
                 city: formData.get('city'),
                 time: formData.get('time'),
                 description: formData.get('description'),
-                image: base64Image
-            };
+                image_url: imageUrl
+            }
+        ]);
 
-            saveSighting(data);
-            loadGallery();
-            closeReportForm();
-            e.target.reset();
+    if (insertError) {
+        showToast("Database error.");
+        console.error(insertError);
+        return;
+    }
 
-            showToast(`Sighting in ${data.city} transmitted. Welcome to the resistance.`);
-        });
+    showToast("Sighting globally synchronized.");
+    closeReportForm();
+    e.target.reset();
+
+    loadGallery();
+});
 
         window.onload = () => {
             loadGallery();
